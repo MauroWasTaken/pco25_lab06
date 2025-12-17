@@ -1,16 +1,13 @@
 #ifndef THREADEDMATRIXMULTIPLIER_H
 #define THREADEDMATRIXMULTIPLIER_H
-
+#include <list>
 #include <pcosynchro/pcoconditionvariable.h>
 #include <pcosynchro/pcohoaremonitor.h>
 #include <pcosynchro/pcomutex.h>
 #include <pcosynchro/pcosemaphore.h>
 #include <pcosynchro/pcothread.h>
-
 #include "abstractmatrixmultiplier.h"
 #include "matrix.h"
-
-
 ///
 /// A class that holds the necessary parameters for a thread to do a job.
 ///
@@ -21,40 +18,100 @@ public:
     const SquareMatrix<T>* A;
     const SquareMatrix<T>* B;
     SquareMatrix<T>* C;
-
     /* Maybe some parameters */
+    int x; // distance to left of array
+    int y; // distance to top of array
+    int blockSize; //size of block
 };
-
-
 /// As a suggestion, a buffer class that could be used to communicate between
 /// the workers and the main thread...
 ///
 /// Here we only wrote two potential methods, but there could be more at the end...
 ///
 template<class T>
-class Buffer
+class Buffer : public PcoHoareMonitor
 {
+    std::list<ComputeParameters<T>> paramQueue;
+    Condition notEmpty;
+    Condition jobsComplete;
+    Condition notBusy;
+    bool isStopped = false;
+    int nbJobsDispatched{0};
 public:
     int nbJobFinished{0}; // Keep this updated
     /* Maybe some parameters */
-
     ///
     /// \brief Sends a job to the buffer
-    /// \param Reference to a ComputeParameters object which holds the necessary parameters to execute a job
+    /// \param params to a ComputeParameters object which holds the necessary parameters to execute a job
     ///
-    void sendJob(ComputeParameters<T> params) {}
-
+    void sendJob(ComputeParameters<T> params) {
+        monitorIn();
+        paramQueue.push_back(params);
+        signal(notEmpty);
+        monitorOut();
+    }
     ///
     /// \brief Requests a job to the buffer
-    /// \param Reference to a ComputeParameters object which holds the necessary parameters to execute a job
+    /// \param parameters to a ComputeParameters object which holds the necessary parameters to execute a job
     /// \return true if a job is available, false otherwise
     ///
-    bool getJob(ComputeParameters<T>& parameters) { return false; }
-
+    bool getJob(ComputeParameters<T>& parameters) {
+        monitorIn();
+        if (paramQueue.empty() && !isStopped)
+            wait(notEmpty);
+        if (isStopped) {
+            signal(notEmpty); //recursively release the other threads
+            monitorOut();
+            return false;
+        }
+        parameters = paramQueue.front();
+        paramQueue.pop_front();
+        nbJobsDispatched++;
+        monitorOut();
+        return true;
+    }
     /* Maybe more methods */
+
+    void jobFinished() {
+        monitorIn();
+        nbJobsDispatched--;
+        nbJobFinished++;
+        if (paramQueue.empty() && nbJobsDispatched == 0) {
+            signal(jobsComplete);
+            signal(notBusy);
+        }
+        monitorOut();
+    }
+    ///
+    /// \brief Stops all current and future jobs
+    ///
+    void stop() {
+        monitorIn();
+        isStopped = true;
+        signal(notEmpty);
+        monitorOut();
+    }
+
+    void waitFree() {
+        monitorIn();
+        if (isStopped){
+            monitorOut();
+            return;
+        }
+        if (!paramQueue.empty() || nbJobsDispatched != 0) {
+            wait(notBusy);
+        }
+        monitorOut();
+    }
+
+    void waitJobs() {
+        monitorIn();
+        if (!paramQueue.empty() || nbJobsDispatched != 0) {
+            wait(jobsComplete);
+        }
+        monitorOut();
+    }
 };
-
-
 ///
 /// A multi-threaded multiplicator. multiply() should at least be reentrant.
 /// It is up to you to offer a very good parallelism.
@@ -62,7 +119,6 @@ public:
 template<class T>
 class ThreadedMatrixMultiplier : public AbstractMatrixMultiplier<T>
 {
-
 public:
     ///
     /// \brief ThreadedMatrixMultiplier
@@ -72,11 +128,12 @@ public:
     /// The threads shall be started from the constructor
     ///
     ThreadedMatrixMultiplier(int nbThreads, int nbBlocksPerRow = 0)
-        : nbThreads(nbThreads), nbBlocksPerRow(nbBlocksPerRow)
+        : nbThreads(nbThreads), nbBlocksPerRow(nbBlocksPerRow), buffer()
     {
-        // TODO
+        for (int i = 0; i < nbThreads; i++) {
+            threads.push_back(std::make_unique<PcoThread>(&ThreadedMatrixMultiplier::run, this));
+        }
     }
-
     ///
     /// In this destructor we should ask for the termination of the computations. They could be aborted without
     /// ending into completion.
@@ -84,9 +141,11 @@ public:
     ///
     ~ThreadedMatrixMultiplier()
     {
-        // TODO
+        buffer.stop();
+        for (int i = 0; i < nbThreads; i++) {
+            threads[i]->join();
+        }
     }
-
     ///
     /// \brief multiply
     /// \param A First matrix
@@ -98,7 +157,6 @@ public:
     {
         multiply(A, B, C, nbBlocksPerRow);
     }
-
     ///
     /// \brief multiply
     /// \param A First matrix
@@ -111,25 +169,51 @@ public:
     ///
     void multiply(const SquareMatrix<T>& A, const SquareMatrix<T>& B, SquareMatrix<T>& C, int nbBlocksPerRow)
     {
-        // OK, computation is done correctly, but... Is it really multithreaded?!?
-        // TODO : Get rid of the next lines and do something meaningful
-        for (int i = 0; i < A.size(); i++) {
-            for (int j = 0; j < A.size(); j++) {
-                T result = 0.0;
-                for (int k = 0; k < A.size(); k++) {
-                    result += A.element(k, j) * B.element(i, k);
-                }
-                C.setElement(i, j, result);
+        buffer.waitFree();
+        int blockSize = A.getSizeX() / nbBlocksPerRow;
+        for (int y = 0; y < nbBlocksPerRow; y++) {
+            for (int x = 0; x < nbBlocksPerRow; x++) {
+                ComputeParameters<T> params;
+                params.A = &A;
+                params.B = &B;
+                params.C = &C;
+                params.x = x * blockSize;
+                params.y = y * blockSize;
+                params.blockSize = blockSize;
+                buffer.sendJob(params);
             }
         }
+        buffer.waitJobs();
     }
-
 protected:
     int nbThreads;
     int nbBlocksPerRow;
+    std::vector<std::unique_ptr<PcoThread>> threads;
+    Buffer<T> buffer;
+private:
+    void run() {
+        while (true) {
+            ComputeParameters<T> params;
+            if (!buffer.getJob(params)) {
+                break;
+            }
+            doJob(params);
+            buffer.jobFinished();
+        }
+    }
+    void doJob(ComputeParameters<T> params) {
+        for (int bx = 0; bx < params.blockSize; bx++) {
+            for (int by = 0; by < params.blockSize; by++) {
+                T value {0};
+                int x = params.x + bx;
+                int y = params.y + by;
+                if (x >= params.A->getSizeX() || y >= params.A->getSizeY()) { continue;}
+                for (int i = 0; i < params.A->getSizeX(); i++) {
+                    value += params.A->element(i, y) * params.B->element(x, i);
+                }
+                params.C->setElement(x,y,value);
+            }
+        }
+    }
 };
-
-
-
-
 #endif // THREADEDMATRIXMULTIPLIER_H
