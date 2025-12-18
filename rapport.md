@@ -108,10 +108,9 @@ Donc si un autre thread appelle `multiply()` pendant qu'un calcul est en cours, 
 Pour l'implementation des tests nous nous sommes basés sur ce qui existait deja, nous nous sommes dit qu'il faudrait ajouter quelques tests pour etre plus sur de notre implementation.
 
 ### Réentrance
-- `ReenteringWith3` :3 threads appellent `multiply()` en parallele sur la même instance.
+- `ReenteringWith3` :3 threads appellent `multiply()` l'un apres l'autre sur la même instance.
 
-Si on avait un état partagé mal protégé, on verrait des erreurs de calcul ou un interbloquage.
-
+on test que l'etat de notre queue reste coherent
 ### découpage impaire
 
 - `OddNumber`
@@ -124,6 +123,10 @@ Test avec `matrixSize/nbBlocksPerRow` pas rond (501 / 7). On gère ça en adapta
 
 On démarre une multiplication dans un thread, on attend un moment, puis on détruit le multiplicateur.
 
+### Tests de multiply en parallel
+- `ThreeMultiplySameTime` : 3 threads appellent `multiply()` au meme temps sur la même instance
+
+Si on avait un état partagé mal protégé, on verrait des erreurs de calcul ou un interbloquage.
 ### Threads en trop
 
 - `UnusedThreads`
