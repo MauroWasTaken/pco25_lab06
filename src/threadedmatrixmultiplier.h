@@ -91,6 +91,8 @@ public:
         monitorIn();
         isStopped = true;
         signal(notEmpty);
+        signal(jobsComplete);
+        signal(notBusy);
         monitorOut();
     }
     ///
