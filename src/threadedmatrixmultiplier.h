@@ -114,6 +114,10 @@ public:
     ///
     void waitJobs() {
         monitorIn();
+        if (isStopped){
+            monitorOut();
+            return;
+        }
         if (!paramQueue.empty() || nbJobsDispatched != 0) {
             wait(jobsComplete);
         }

@@ -135,6 +135,37 @@ TEST(Multiplier, StopMidMultiplication)
     }))
 }
 ///
+///\brief tests if multiply can handle multiple calls at the same time
+///
+TEST(Multiplier, ThreeMultiplySameTime)
+{
+        constexpr int MATRIXSIZE = 800;
+        constexpr int NBTHREADS = 4;
+        constexpr int NBBLOCKSPERROW = 100;
+
+        auto multiplier = std::make_unique<ThreadedMultiplierType>(NBTHREADS, NBBLOCKSPERROW);
+
+        SquareMatrix<int> A(MATRIXSIZE);
+        SquareMatrix<int> B(MATRIXSIZE);
+        SquareMatrix<int> C(MATRIXSIZE);
+
+        PcoThread computeThread([&]() {
+            multiplier->multiply(A, B, C, NBBLOCKSPERROW);
+        });
+        PcoThread computeThread2([&]() {
+            multiplier->multiply(A, B, C, NBBLOCKSPERROW);
+        });
+        PcoThread computeThread3([&]() {
+            multiplier->multiply(A, B, C, NBBLOCKSPERROW);
+        });
+
+        computeThread.join();
+        computeThread2.join();
+        computeThread3.join();
+
+        ASSERT_TRUE(true);
+}
+///
 ///\brief making sure that extra threads will just sleep instantly
 ///
 TEST(Multiplier, UnusedThreads)
