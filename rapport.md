@@ -6,9 +6,9 @@
 
 Ce projet consiste à optimiser la multiplication de matrices carrées (C = A·B) en utilisant **plusieurs threads** et un **moniteur de Hoare**.
 
-On découpe la matrice résultat en **blocs** et on envoie ces blocs dans un buffer, puis des workers viennent prendre le job.
+On découpe la charge de travail de la multiplication en **blocs** et on les stock dans le buffer, puis des workers viennent prendre le job.
 
-Le but pédagogique de ce labo est donc de pratiquer les notions de multi-threading, lecteur-readcteur et les moniteurs de Hoare.
+Le but pédagogique de ce labo est donc de pratiquer les notions de multi-threading et les moniteurs de Hoare.
 
 
 # Choix de conception
@@ -17,14 +17,6 @@ Le but pédagogique de ce labo est donc de pratiquer les notions de multi-thread
 
 La modélisation/implémentation de ce projet ce fait comme ceci :
 
-- Les matrices (matrix.h)
-
-`Matrix<T>` et `SquareMatrix<T>` stockent les données dans un `std::vector<T>`.
-On a juste `element()` et `setElement()` pour lire/écrire.
-
-- Le multiplicateur simple (simplematrixmultiplier.h)
-
-Version simple du calcul, sert de référence pour le résultat.
 
 - Le multiplicateur multi-thread (threadedmatrixmultiplier.h)
 
@@ -42,7 +34,7 @@ Ce sont les test qui valident notre implémentation.
 On à plusieurs threads workers qui tournent en boucle et demandent du travail.
 On centralise l'état partagé dans un seul endroit : **la file de jobs**.
 
-On a une classe `Buffer<T> : public PcoHoareMonitor`.
+On a une classe `Buffer`.
 L'idée :
 
 - Le thread qui appel `multiply()` est le **producteur** (il push les jobs).
@@ -51,11 +43,11 @@ L'idée :
 Avec les méthodes clé :
 
 - `sendJob(params)` : push dans la queue + `signal(notEmpty)`.
-- `getJob(parameters)` : si vide -> `wait(notEmpty)`, sinon pop.
+- `getJob(parameters)` : fonction bloquante `wait(notEmpty)` qui attend jusqu'a avoir un job
 - `jobFinished()` : décrémente les jobs “en cours” et si plus rien → `signal(jobsComplete)`.
-- `waitJobs()` : le thread producteur attend que tout les jobs soient finis.
-- `waitFree()` : attend que le buffer soit totalement idle (queue vide + 0 jobs dispatched).
-- `stop()` : met le flag et réveille tout le monde.
+- `waitJobs()` : fonction bloquante qui attend que tout les jobs soient finis `wait(notBusy)`.
+- `waitFree()` : fonction bloquante qui attend que le buffer soit totalement idle `wait(jobsComplete)`.
+- `stop()` : active le flag `isStopped`  et réveille tout le monde.
 
 
 **Pourquoi Hoare et pas juste un mutex ?**
@@ -63,7 +55,7 @@ Avec les méthodes clé :
 Parce qu'on a besoin de conditions (par exemple pour savoir si les jobs sont fini) -> Moniteur de Hoare bien.
 
 
-### Lecteur / rédacteurs et variable critique
+### Implementation de la concurrence 
 
 #### lecture
 
@@ -76,7 +68,7 @@ value += params.A->element(i, y) * params.B->element(x, i);
 Donc A et B sont des ressources **lecture seule** pendant la multiplication.
 Plusieurs threads peuvent donc les lire simultanément sans problème.
 
-#### Rédacteur
+#### écriture
 
 Chaque worker écrit dans C :
 
@@ -84,10 +76,10 @@ Chaque worker écrit dans C :
 params.C->setElement(x,y,value);
 ```
 
-Normalement c'est le cas “writers” : si deux threads écrivent la meme case, problème de concurence.
+Normalement si deux threads écrivent la dans meme case, on aurait un problème de concurence.
 Notre choix de conception pour éviter ça :
 
-**un job = un bloc de C**, donc deux threads ne doivent jamais écrire sur la même zone.
+**un job = un bloc de C**, donc deux threads ne écrivent jamais sur la même zone.
 
 Concrètement : `multiply()` crée des jobs avec un (x,y) de départ et un `blockSize`, et `doJob` calcule toutes les cases du bloc.
 Résultat : pas besoin d'un mutex global sur `C` (on garde plus de parallélisme).
@@ -113,27 +105,14 @@ Donc si un autre thread appelle `multiply()` pendant qu'un calcul est en cours, 
 
 ## Tests
 
-La stratégie générale : on compare toujours la sortie de notre `ThreadedMatrixMultiplier` avec la ref `SimpleMatrixMultiplier`.
-C'est `Matrix::compare()` qui affiche la premiere case qui diffère (sinon “No error in calculus”).
-
-### Tests de base
-
-- `SingleThread`
-
-On lance le multiplicateur threadé avec **1 seul thread**. Ca valide la logique sans “vrai” parallélisme.
-
-- `Simple`
-
-On lance avec **4 threads** sur une matrice 500x500. But : valider la correction + voir un gain de temps.
+Pour l'implementation des tests nous nous sommes basés sur ce qui existait deja, nous nous sommes dit qu'il faudrait ajouter quelques tests pour etre plus sur de notre implementation.
 
 ### Réentrance
+- `ReenteringWith3` :3 threads appellent `multiply()` en parallele sur la même instance.
 
-- `Reentering` : 2 threads appellent `multiply()` en parallele sur la même instance.
-- `ReenteringWith3` : pareil mais à 3.
+Si on avait un état partagé mal protégé, on verrait des erreurs de calcul ou un interbloquage.
 
-Si on avait un état partagé mal protégé, on verrait des erreurs de calcul ou un deadlock.
-
-### Cas bord (découpage)
+### découpage impaire
 
 - `OddNumber`
 
