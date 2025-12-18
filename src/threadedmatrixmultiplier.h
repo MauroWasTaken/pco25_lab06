@@ -71,7 +71,9 @@ public:
         return true;
     }
     /* Maybe more methods */
-
+    ///
+    /// \brief function called when thread finishes their job
+    ///
     void jobFinished() {
         monitorIn();
         nbJobsDispatched--;
@@ -91,7 +93,9 @@ public:
         signal(notEmpty);
         monitorOut();
     }
-
+    ///
+    /// \brief blocking function that waits until the buffer is free to use
+    ///
     void waitFree() {
         monitorIn();
         if (isStopped){
@@ -103,7 +107,9 @@ public:
         }
         monitorOut();
     }
-
+    ///
+    /// \brief blocking function that waits until the jobs sent to the buffer are done running
+    ///
     void waitJobs() {
         monitorIn();
         if (!paramQueue.empty() || nbJobsDispatched != 0) {
@@ -179,7 +185,15 @@ public:
                 params.C = &C;
                 params.x = x * blockSize;
                 params.y = y * blockSize;
-                params.blockSize = blockSize;
+
+                //checks makes sure last row/column is calculated even if odd
+                if (x == nbBlocksPerRow - 1) {
+                    params.blockSize = C.getSizeX() - params.x;
+                } else if (y == nbBlocksPerRow - 1) {
+                    params.blockSize = C.getSizeX() - params.y;
+                } else {
+                    params.blockSize = blockSize;
+                }
                 buffer.sendJob(params);
             }
         }
@@ -191,6 +205,9 @@ protected:
     std::vector<std::unique_ptr<PcoThread>> threads;
     Buffer<T> buffer;
 private:
+    ///
+    /// \brief main logic loop for the different threads
+    ///
     void run() {
         while (true) {
             ComputeParameters<T> params;
@@ -201,6 +218,10 @@ private:
             buffer.jobFinished();
         }
     }
+    ///
+    /// \brief executes the job calculating the value of every cell in the block
+    /// \param params object of ComputeParameters containing all information need for the job
+    ///
     void doJob(ComputeParameters<T> params) {
         for (int bx = 0; bx < params.blockSize; bx++) {
             for (int by = 0; by < params.blockSize; by++) {
